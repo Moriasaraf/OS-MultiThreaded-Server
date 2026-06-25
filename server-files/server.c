@@ -151,6 +151,8 @@ int main(int argc, char *argv[])
         incomingTask new_task;
         new_task.connfd = connfd;
 
+        timerclear(&new_task.task_time_stats.log_exit);
+
         // TODO: HW3 — Record the request arrival time here.
         gettimeofday(&new_task.task_time_stats.task_arrival, NULL);
 

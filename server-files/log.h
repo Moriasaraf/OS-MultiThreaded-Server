@@ -1,5 +1,6 @@
 #ifndef SERVER_LOG_H
 #define SERVER_LOG_H
+#include <pthread.h>
 
 // TODO:
 // Implement a thread-safe server log system.
