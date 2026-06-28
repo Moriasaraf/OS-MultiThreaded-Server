@@ -570,15 +570,58 @@ int Open_listenfd(int port)
  ****************************/
 
 /* $begin udp_open */
+
+int udp_open(int port){
+    int udp_fd;
+    struct sockaddr_in serveraddr;
+
+// /* Create a socket descriptor */
+    if ((udp_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        fprintf(stderr, "socket failed\n");
+        return -1;
+    }
+
+    //fill serveraddr info
+    bzero((char *) &serveraddr, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET; 
+    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY); 
+    serveraddr.sin_port = htons(port); 
+    if (bind(udp_fd, (SA *)&serveraddr, sizeof(serveraddr)) < 0) {
+      fprintf(stderr, "bind failed\n");
+      return -1;
+    }
+
+    return udp_fd;
+}
+
+
 int UDP_Open(int port)
 {
-//TODO
+    int rc;
+
+    if ((rc = udp_open(port)) < 0)
+        unix_error("UDP_Open error");
+    return rc;
+
 }
 /* $end udp_open */
 
 int UDP_FillSockAddr(struct sockaddr_in *addr, char *hostname, int port)
 {
-//TODO
+//turn hostname::port into and computer readeable ip, put that info into addr.
+    struct hostent *hostp;
+
+    bzero((char *) addr, sizeof(struct sockaddr_in));
+    addr->sin_family = AF_INET;
+    addr->sin_port = htons(port);
+
+    //turn the hostname into ip for communication.
+    if ((hostp = gethostbyname(hostname)) == NULL) {
+        dns_error("finding ip via hostname failed");
+        return -1;
+    }
+    bcopy((char *)hostp->h_addr, (char *)&addr->sin_addr.s_addr, hostp->h_length);
+    return 0;
 }
 
 int UDP_Write(int sd, struct sockaddr_in *addr, char *buffer, int n)

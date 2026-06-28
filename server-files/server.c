@@ -24,9 +24,20 @@ void getargs(int *port, int argc, char *argv[])
 
 // TODO: HW3 — Task 1: Initialize the thread pool and request queue.
 // This server currently handles all requests in the main thread.
+struct socket_node{
+        struct sockaddr_in addr;
+        struct socket_node* next;
+        int udp_fd;
+};
+
 typedef struct workerThread{
     pthread_t thread;
     struct Threads_stats thread_stats;
+
+    struct socket_node* incoming_udp_addr_list;
+    int udp_ping_count;
+    pthread_mutex_t thread_stats_lock;
+
 } activeThread;
 
 typedef struct {
@@ -70,6 +81,28 @@ void* thread_function(void* at){
     activeThread* this_thread = at; //info about what this thread is for stat update.
 
     while(1){
+        //check UDP pings.
+        pthread_mutex_lock(&this_thread->thread_stats_lock);
+        while (this_thread->udp_ping_count > 0){
+            struct socket_node* temp = this_thread->incoming_udp_addr_list->next;
+            this_thread->incoming_udp_addr_list->next = temp->next;
+            this_thread->udp_ping_count--;
+
+            pthread_mutex_unlock(&this_thread->thread_stats_lock);
+            //to avoid busy wait.
+
+            //answer request
+            char response[MAXBUF] = "";
+            append_thread_log(response, &this_thread->thread_stats);
+            UDP_Write(temp->udp_fd, &temp->addr, response, strlen(response));
+
+            pthread_mutex_lock(&this_thread->thread_stats_lock);
+        }
+        pthread_mutex_unlock(&this_thread->thread_stats_lock);
+
+
+
+        //after checking udp, check for tcp.
         //lock and go into queue to search for the next task.
         pthread_mutex_lock(&lock);
         while (incoming_tasks_amount == 0) {
@@ -107,7 +140,7 @@ int main(int argc, char *argv[])
     log_instance = create_log();
 
     // int port;
-    int listenfd, connfd, clientlen;
+    int listenfd, connfd, clientlen, udp_fd;
     int tcp_port, udp_port, threads_size, queue_size;
     struct sockaddr_in clientaddr;
     double debug_time;
@@ -133,73 +166,127 @@ int main(int argc, char *argv[])
         threads_array[i].thread_stats.post_req = 0;
         threads_array[i].thread_stats.stat_req = 0;
         threads_array[i].thread_stats.total_req = 0;
-        if (pthread_create(&threads_array[i].thread, NULL, thread_function , &threads_array[i]) != 0){
-            //creating the thread went wrong.
+        threads_array[i].udp_ping_count = 0;
+
+        pthread_mutex_init(&threads_array[i].thread_stats_lock, NULL);
+
+        struct socket_node*  dummy_head = malloc(sizeof(struct socket_node));
+        if (dummy_head == NULL){
             free(threads_array);
             free(tasks_queue);
+            unix_error("malloc failed");
+            exit(1);
+        }
+
+        threads_array[i].incoming_udp_addr_list = dummy_head;
+
+        int status = pthread_create(&threads_array[i].thread, NULL, thread_function , &threads_array[i]);
+        if (status != 0){
+            //creating the thread went wrong.
+            for (int j = 0; j < i; j++){
+                free(threads_array[j].incoming_udp_addr_list);
+            }
+            free(threads_array);
+            free(tasks_queue);
+            posix_error(status, "pthread_create failed");
             exit(1);
         }
     }
 
 
     listenfd = Open_listenfd(tcp_port);
+    udp_fd = UDP_Open(udp_port);
+    fd_set readFDs;
+
     while (1) {
-        clientlen = sizeof(clientaddr);
-        connfd = Accept(listenfd, (SA *)&clientaddr, (socklen_t*) &clientlen);
+        //select a fd (tcp or udp)
+        FD_ZERO(&readFDs);
+        FD_SET(listenfd, &readFDs);
+        FD_SET(udp_fd, &readFDs);
+        int maxFD = (listenfd > udp_fd) ? listenfd : udp_fd;
+
+        int incoming_fd = select(maxFD + 1, &readFDs, NULL, NULL, NULL);
+
+        //handle udp request.
+        if (FD_ISSET(udp_fd, &readFDs)){
+            struct sockaddr_in UDP_addr;
+            char buff[MAXBUF];
+
+            //read incoming udp request, but information in buffer.
+            UDP_Read(udp_fd , &UDP_addr, buff, MAXBUF);
+            int thread_num = atoi(buff);
+
+            if (thread_num < 0 || thread_num >= threads_size){
+                //number of thread received via udp is not a legal thread number.
+                fprintf(stderr, "invalid thread id via udp ping %d", thread_num);
+                break;
+            }
+
+            struct socket_node* new_udp_ping = malloc(sizeof(struct socket_node));
+            new_udp_ping->udp_fd = udp_fd;
+            new_udp_ping->addr = UDP_addr;
+            new_udp_ping->next = NULL;
 
 
-        incomingTask new_task;
-        new_task.connfd = connfd;
+            pthread_mutex_lock(&threads_array[thread_num].thread_stats_lock);
 
-        timerclear(&new_task.task_time_stats.log_exit);
+            //add to the end of linked chain.
+            struct socket_node* curr = threads_array[thread_num].incoming_udp_addr_list;
+            while (curr->next != NULL) curr = curr->next;
+            curr->next = new_udp_ping;
+            threads_array[thread_num].udp_ping_count++;
 
-        // TODO: HW3 — Record the request arrival time here.
-        gettimeofday(&new_task.task_time_stats.task_arrival, NULL);
-
-        // // DEMO PURPOSE ONLY:
-        // // This is a dummy request handler that immediately processes the
-        // // request in the master thread without concurrency. Replace this with
-        // // logic that enqueues the connection so a worker thread handles it.
-
-        // threads_stats t = malloc(sizeof(struct Threads_stats));
-        // t->id = 0;             // Thread ID (placeholder)
-        // t->stat_req = 0;       // Static request count
-        // t->dynm_req = 0;       // Dynamic request count
-        // t->post_req = 0;       // POST request count
-        // t->total_req = 0;      // Total request count
-
-
-        //lock, add the incoming task only if there is space in queue, otherwise wait.
-        //then signal the threads waiting on not empty that there is a taks to be done and then unlock.
-        //we delegated the requesthandle the the threads, the will also update if queue is empty or full if needed.
-        //and they are also responsible to close the fd given to them through new_task.connfd at the end.
-        //they also need to update dispatch and thread_stats via 
-        pthread_mutex_lock(&lock);
-        while ((incoming_tasks_amount + active_tasks_amount) >= max_queue_size) {
-            pthread_cond_wait(&queue_not_full, &lock);
+            pthread_mutex_unlock(&threads_array[thread_num].thread_stats_lock);
         }
 
-        tasks_queue[tail] = new_task;
-        tail = (tail + 1) % max_queue_size;
-        incoming_tasks_amount++;
-        pthread_cond_signal(&queue_not_empty);
-        pthread_mutex_unlock(&lock);
 
-        // time_stats dum;
+        //handle tcp request.
+        if (FD_ISSET(listenfd, &readFDs)){
+            clientlen = sizeof(clientaddr);
+            connfd = Accept(listenfd, (SA *)&clientaddr, (socklen_t*) &clientlen);
 
-        // gettimeofday(&arrival, NULL);
+            incomingTask new_task;
+            new_task.connfd = connfd;
 
-        // Call the request handler (immediate in master thread — DEMO ONLY)
-        // requestHandle(connfd, dum, t, log);
+            timerclear(&new_task.task_time_stats.log_exit);
 
-        // free(t); // Cleanup
-        // Close(connfd); // Close the connection
+            // TODO: HW3 — Record the request arrival time here.
+            gettimeofday(&new_task.task_time_stats.task_arrival, NULL);
+
+            //lock, add the incoming task only if there is space in queue, otherwise wait.
+            //then signal the threads waiting on not empty that there is a taks to be done and then unlock.
+            //we delegated the requesthandle the the threads, the will also update if queue is empty or full if needed.
+            //and they are also responsible to close the fd given to them through new_task.connfd at the end.
+            //they also need to update dispatch and thread_stats via 
+            pthread_mutex_lock(&lock);
+            while ((incoming_tasks_amount + active_tasks_amount) >= max_queue_size) {
+                pthread_cond_wait(&queue_not_full, &lock);
+            }
+
+            tasks_queue[tail] = new_task;
+            tail = (tail + 1) % max_queue_size;
+            incoming_tasks_amount++;
+            pthread_cond_signal(&queue_not_empty);
+            pthread_mutex_unlock(&lock);
+        }
+
     }
 
     // Clean up the server log before exiting
     destroy_log(log_instance);
 
     // TODO: HW3 — Add cleanup code for the thread pool and queue.
+    struct socket_node* clean_node;
+    struct socket_node* clean_node_temp;
+    for (int i = 0; i < threads_size; i++){
+        clean_node = threads_array[i].incoming_udp_addr_list;
+        while (clean_node != NULL){
+            clean_node_temp = clean_node->next;
+            free(clean_node);
+            clean_node = clean_node_temp;
+        }
+    }
+
     free(tasks_queue);
     free(threads_array);
 }
