@@ -1,6 +1,9 @@
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "log.h"
+#include <stdio.h>
+#include "segel.h"
 
 // Opaque struct definition
 struct Server_Log {
@@ -15,20 +18,32 @@ struct Server_Log {
     pthread_mutex_t log_lock;
     pthread_cond_t read_cond;
     pthread_cond_t write_cond;
+
+    double debug_sleep_time;
 };
 
 // Creates a new server log instance (stub)
-server_log create_log() {
+server_log create_log(double debug_time) {
     // TODO: Allocate and initialize internal log structure
 
     //using dynamic buffer, put \0 at beginning so we can use strlen.
     struct Server_Log* temp = malloc(sizeof(struct Server_Log));
+    if (temp == NULL){
+        unix_error("malloc failed");
+    }
+
     int initial_buff_size = 128;
 
     temp->buffer = (char*)malloc(initial_buff_size);
+    if (temp->buffer == NULL){
+        unix_error("malloc failed");
+    }
+
+
     temp->buffer[0] = '\0';
     temp->buff_length = 0;
     temp->buff_size = initial_buff_size;
+    temp->debug_sleep_time = debug_time;
 
     temp->active_readers = 0;
     temp->active_writers = 0;
@@ -65,6 +80,11 @@ int get_log(server_log log, char** dst) {
         pthread_cond_wait(&log->read_cond, &log->log_lock);  
     }
     log->active_readers++;
+
+    if (log->debug_sleep_time > 0) {
+        usleep((unsigned int)(log->debug_sleep_time * 1000000)); 
+    }
+
     pthread_mutex_unlock(&log->log_lock);
 
     *dst = (char*)malloc(log->buff_length + 1); // Allocate for caller
@@ -92,6 +112,10 @@ void add_to_log(server_log log, const char* data, int data_len) {
     }
     log->active_writers++;
     log->waiting_writers--;
+
+    if (log->debug_sleep_time > 0) {
+        usleep((unsigned int)(log->debug_sleep_time * 1000000)); 
+    }
 
     //inset to buff, the release lock and broadcast read_cond and write_cond
     if (log->buff_size < log->buff_length + data_len + 2){

@@ -195,8 +195,9 @@ void requestHandle(int fd, time_stats tm_stats, threads_stats t_stats, server_lo
             sprintf(resp_headers + strlen(resp_headers), "Server: OS-HW3 Web Server\r\n");
         }
 
-        gettimeofday(&tm_stats.log_enter, NULL);
+        
         char log_entry[MAXBUF] = "";
+        gettimeofday(&tm_stats.log_enter, NULL);
         int log_length = append_stats(log_entry, t_stats, tm_stats);
         add_to_log(log, log_entry, log_length);
         gettimeofday(&tm_stats.log_exit, NULL);

@@ -63,7 +63,7 @@ server_log log_instance;
 
 // TODO: HW3 — Extend getargs() to parse the full argument list.
 void extended_getargs(int *tcp_port,int *udp_port,int *threads_size,
-                            int *queue_size,double *debug_time ,int argc, char *argv[])
+                            int *queue_size, double *debug_time ,int argc, char *argv[])
 {
     if (argc < 6) {
         fprintf(stderr, "Usage: %s <tcp_port> <udp_port> <threads> <queue_size> <debug_sleep_time>\n", argv[0]);
@@ -71,6 +71,11 @@ void extended_getargs(int *tcp_port,int *udp_port,int *threads_size,
     }
     *tcp_port = atoi(argv[1]);
     *udp_port = atoi(argv[2]);
+
+    if (*tcp_port == *udp_port){
+        app_error("tcp port must be different from udp port");
+    }
+
     *threads_size = atoi(argv[3]);
     *queue_size = atoi(argv[4]);
     *debug_time = atof(argv[5]);
@@ -96,6 +101,8 @@ void* thread_function(void* at){
             append_thread_log(response, &this_thread->thread_stats);
             UDP_Write(temp->udp_fd, &temp->addr, response, strlen(response));
 
+            free(temp);
+
             pthread_mutex_lock(&this_thread->thread_stats_lock);
         }
         pthread_mutex_unlock(&this_thread->thread_stats_lock);
@@ -105,8 +112,25 @@ void* thread_function(void* at){
         //after checking udp, check for tcp.
         //lock and go into queue to search for the next task.
         pthread_mutex_lock(&lock);
-        while (incoming_tasks_amount == 0) {
+
+        //make sure no udp arrived.
+        pthread_mutex_lock(&this_thread->thread_stats_lock);
+        int pending_udp = this_thread->udp_ping_count;
+        pthread_mutex_unlock(&this_thread->thread_stats_lock);
+
+
+        while (incoming_tasks_amount == 0 && pending_udp == 0) {
             pthread_cond_wait(&queue_not_empty, &lock); //if empty, wait and release the lock.
+
+            //check which arrived.
+            pthread_mutex_lock(&this_thread->thread_stats_lock);
+            pending_udp = this_thread->udp_ping_count;
+            pthread_mutex_unlock(&this_thread->thread_stats_lock);
+        }
+
+        if (pending_udp > 0) {
+            pthread_mutex_unlock(&lock);
+            continue; 
         }
 
         //if at least one task is abailable, take the first, update head to the next, add 1 to active and decrease 1 from incoming tasks.
@@ -136,9 +160,6 @@ void* thread_function(void* at){
 
 int main(int argc, char *argv[])
 {
-    // Create the global server log
-    log_instance = create_log();
-
     // int port;
     int listenfd, connfd, clientlen, udp_fd;
     int tcp_port, udp_port, threads_size, queue_size;
@@ -147,6 +168,10 @@ int main(int argc, char *argv[])
 
     // getargs(&port, argc, argv);
     extended_getargs(&tcp_port, &udp_port, &threads_size, &queue_size, &debug_time, argc, argv);
+
+    // Create the global server log
+    log_instance = create_log(debug_time);
+
     
     max_queue_size = queue_size;
 
@@ -158,6 +183,9 @@ int main(int argc, char *argv[])
     //set threads pool and queue;
     threads_array = malloc(sizeof(activeThread)*threads_size);
     tasks_queue =  malloc(sizeof(incomingTask)*queue_size);
+    if (threads_array == NULL || tasks_queue == NULL){
+        unix_error("malloc failed");
+    }
 
     //create threads.
     for (int i = 0; i < threads_size; i++){
@@ -175,7 +203,6 @@ int main(int argc, char *argv[])
             free(threads_array);
             free(tasks_queue);
             unix_error("malloc failed");
-            exit(1);
         }
 
         threads_array[i].incoming_udp_addr_list = dummy_head;
@@ -223,6 +250,11 @@ int main(int argc, char *argv[])
             }
 
             struct socket_node* new_udp_ping = malloc(sizeof(struct socket_node));
+
+            if (new_udp_ping == NULL){
+                unix_error("malloc failed");
+            }
+
             new_udp_ping->udp_fd = udp_fd;
             new_udp_ping->addr = UDP_addr;
             new_udp_ping->next = NULL;
@@ -235,6 +267,8 @@ int main(int argc, char *argv[])
             while (curr->next != NULL) curr = curr->next;
             curr->next = new_udp_ping;
             threads_array[thread_num].udp_ping_count++;
+
+            pthread_cond_broadcast(&queue_not_empty); //wake up threads sleeping on tcp.
 
             pthread_mutex_unlock(&threads_array[thread_num].thread_stats_lock);
         }
