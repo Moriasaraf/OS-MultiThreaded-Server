@@ -14,7 +14,7 @@
 typedef struct Server_Log* server_log;
 
 // Creates a new server log instance
-server_log create_log();
+server_log create_log(double debug_time);
 
 // Destroys and frees the log
 void destroy_log(server_log log);

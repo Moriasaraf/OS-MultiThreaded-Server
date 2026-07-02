@@ -65,7 +65,7 @@ server_log log_instance;
 void extended_getargs(int *tcp_port,int *udp_port,int *threads_size,
                             int *queue_size, double *debug_time ,int argc, char *argv[])
 {
-    if (argc < 6) {
+    if (argc != 6) {
         fprintf(stderr, "Usage: %s <tcp_port> <udp_port> <threads> <queue_size> <debug_sleep_time>\n", argv[0]);
         exit(1);
     }
@@ -75,7 +75,7 @@ void extended_getargs(int *tcp_port,int *udp_port,int *threads_size,
     if (*tcp_port == *udp_port){
         app_error("tcp port must be different from udp port");
     }
-    if (*tcp_port > 65535 || *udp_port > 65535 || *tcp_port < 0 || *udp_port < 0){
+    if (*tcp_port > 65535 || *udp_port > 65535 || *tcp_port <= 1024 || *udp_port <= 1024){
         app_error("port not in range 0 - 65535");
     }
     
@@ -257,7 +257,7 @@ int main(int argc, char *argv[])
             UDP_Read(udp_fd , &UDP_addr, buff, MAXBUF);
             int thread_num = atoi(buff);
 
-            if (thread_num < 0 || thread_num >= threads_size){
+            if (thread_num < 1 || thread_num >= threads_size){
                 unix_error("invalid thread id via udp ping");
             }
 
@@ -271,6 +271,7 @@ int main(int argc, char *argv[])
             new_udp_ping->addr = UDP_addr;
             new_udp_ping->next = NULL;
 
+            thread_num -= 1;
 
             pthread_mutex_lock(&threads_array[thread_num].thread_stats_lock);
 
