@@ -75,10 +75,24 @@ void extended_getargs(int *tcp_port,int *udp_port,int *threads_size,
     if (*tcp_port == *udp_port){
         app_error("tcp port must be different from udp port");
     }
+    if (*tcp_port > 65535 || *udp_port > 65535 || *tcp_port < 0 || *udp_port < 0){
+        app_error("port not in range 0 - 65535");
+    }
+    
 
     *threads_size = atoi(argv[3]);
     *queue_size = atoi(argv[4]);
+    if (*threads_size <= 0){
+        app_error("threads size below 0");
+    }
+    if (*queue_size <= 0){
+        app_error("queue size below 0");
+    }
+
     *debug_time = atof(argv[5]);
+    if (*debug_time < 0){
+        app_error("debug time cant be negative");
+    }
 }
 
 
@@ -244,9 +258,7 @@ int main(int argc, char *argv[])
             int thread_num = atoi(buff);
 
             if (thread_num < 0 || thread_num >= threads_size){
-                //number of thread received via udp is not a legal thread number.
-                fprintf(stderr, "invalid thread id via udp ping %d", thread_num);
-                break;
+                unix_error("invalid thread id via udp ping");
             }
 
             struct socket_node* new_udp_ping = malloc(sizeof(struct socket_node));

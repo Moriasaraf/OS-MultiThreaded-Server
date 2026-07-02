@@ -4,6 +4,7 @@
 #include "log.h"
 #include <stdio.h>
 #include "segel.h"
+#include "request.h"
 
 // Opaque struct definition
 struct Server_Log {
@@ -69,9 +70,11 @@ void destroy_log(server_log log) {
 }
 
 // Returns dummy log content as string (stub)
-int get_log(server_log log, char** dst) {
+int get_log(server_log log, char** dst, struct Time_stats *tm_stats) {
     // TODO: Return the full contents of the log as a dynamically allocated string
     // This function should handle concurrent access
+
+    gettimeofday(&tm_stats->log_enter, NULL);
 
     // const char* dummy = "Log is not implemented.\n";
     // int len = strlen(dummy);
@@ -85,6 +88,8 @@ int get_log(server_log log, char** dst) {
         usleep((unsigned int)(log->debug_sleep_time * 1000000)); 
     }
 
+    gettimeofday(&tm_stats->log_exit, NULL);
+    
     pthread_mutex_unlock(&log->log_lock);
 
     *dst = (char*)malloc(log->buff_length + 1); // Allocate for caller
@@ -101,9 +106,11 @@ int get_log(server_log log, char** dst) {
 }
 
 // Appends a new entry to the log (no-op stub)
-void add_to_log(server_log log, const char* data, int data_len) {
+void add_to_log(server_log log, struct Threads_stats *t_stats, struct Time_stats *tm_stats) {
     // TODO: Append the provided data to the log
     // This function should handle concurrent access
+    gettimeofday(&tm_stats->log_enter, NULL);
+
     pthread_mutex_lock(&log->log_lock);
     log->waiting_writers++;
 
@@ -116,6 +123,12 @@ void add_to_log(server_log log, const char* data, int data_len) {
     if (log->debug_sleep_time > 0) {
         usleep((unsigned int)(log->debug_sleep_time * 1000000)); 
     }
+
+    //create data
+    char data[MAXBUF] = "";
+    gettimeofday(&tm_stats->log_exit, NULL);
+    int data_len = append_stats(data, t_stats, *tm_stats);
+
 
     //inset to buff, the release lock and broadcast read_cond and write_cond
     if (log->buff_size < log->buff_length + data_len + 2){

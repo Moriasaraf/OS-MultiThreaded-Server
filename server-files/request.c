@@ -196,14 +196,17 @@ void requestHandle(int fd, time_stats tm_stats, threads_stats t_stats, server_lo
         }
 
         
-        char log_entry[MAXBUF] = "";
-        gettimeofday(&tm_stats.log_enter, NULL);
-        int log_length = append_stats(log_entry, t_stats, tm_stats);
-        add_to_log(log, log_entry, log_length);
-        gettimeofday(&tm_stats.log_exit, NULL);
+        // char log_entry[MAXBUF] = "";
+        // gettimeofday(&tm_stats.log_enter, NULL);
+        // int log_length = append_stats(log_entry, t_stats, tm_stats);
+        // add_to_log(log, log_entry, log_length);
+        // gettimeofday(&tm_stats.log_exit, NULL);
+
+        add_to_log(log, t_stats, &tm_stats);
+
 
     } else if (strcasecmp(method, "POST") == 0) {
-        body_len = get_log(log, (char**)&body_content);
+        body_len = get_log(log, (char**)&body_content, &tm_stats);
 
         //add 1 to post request:
         t_stats->post_req++;
