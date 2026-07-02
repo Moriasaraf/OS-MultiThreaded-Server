@@ -257,7 +257,7 @@ int main(int argc, char *argv[])
             UDP_Read(udp_fd , &UDP_addr, buff, MAXBUF);
             int thread_num = atoi(buff);
 
-            if (thread_num < 1 || thread_num >= threads_size){
+            if (thread_num < 1 || thread_num > threads_size){
                 unix_error("invalid thread id via udp ping");
             }
 
