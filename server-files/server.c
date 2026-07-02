@@ -203,7 +203,7 @@ int main(int argc, char *argv[])
 
     //create threads.
     for (int i = 0; i < threads_size; i++){
-        threads_array[i].thread_stats.id = i;
+        threads_array[i].thread_stats.id = i + 1;
         threads_array[i].thread_stats.dynm_req = 0;
         threads_array[i].thread_stats.post_req = 0;
         threads_array[i].thread_stats.stat_req = 0;
